@@ -54,6 +54,9 @@ setuptools.setup(
         "Tracker": "https://github.com/CraftSpider/AIRC/issues"
     },
     packages=setuptools.find_packages(),
-    install_requires=["asyncio"],
+    install_requires=[
+        "asyncio",
+        "websockets>=6.0"
+    ],
     python_requires=">=3.5"
 )
