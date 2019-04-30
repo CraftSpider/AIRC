@@ -6,11 +6,12 @@ import asyncio
 import inspect
 import logging
 
-from .client import DefaultClient, Messageable
+from .abstracts import Messageable
+from .client import DefaultClient
 from .errors import HandlerError, CheckFailure
-from .enums import UserType
 from .events import Event
 from .utils import Cooldown
+
 
 _log = logging.getLogger("airc.bot")
 
@@ -48,8 +49,8 @@ def _split_args(content):
 
 class DefaultBot(DefaultClient):
 
-    def __init__(self, prefix, user_type=UserType.normal_user, loop=None):
-        super().__init__(user_type, loop)
+    def __init__(self, prefix, uris=None, *, loop=None):
+        super().__init__(uris, loop=loop)
 
         self.prefix = prefix
         self.all_commands = {}

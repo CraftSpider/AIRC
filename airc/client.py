@@ -4,9 +4,13 @@
 
 import asyncio
 import logging
-import abc
 
 from . import server
+from .abstracts import Messageable
+
+
+__all__ = ("User", "Channel", "DefaultClient")
+
 
 log = logging.getLogger("airc.client")
 
@@ -15,12 +19,6 @@ async def empty_handler(event): pass
 
 
 def empty_handler_sync(event): pass
-
-
-class Messageable(abc.ABC):
-
-    @abc.abstractmethod
-    def message(self, message): ...
 
 
 class User(Messageable):

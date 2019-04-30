@@ -8,7 +8,7 @@
 """
 
 from .events import Event
-from .enums import UserType, ReplyType
+from .enums import *
 from .errors import *
 from .server import Server, DefaultServer
 from .client import DefaultClient
@@ -18,7 +18,7 @@ __title__ = "airc"
 __author__ = "CraftSpider"
 __license__ = "MIT"
 __copyright__ = "Copyright 2019 CraftSpider"
-__version__ = "0.0.1"
+__version__ = "0.0.2"
 
 log = logging.getLogger(__name__)
 log.addHandler(logging.StreamHandler())

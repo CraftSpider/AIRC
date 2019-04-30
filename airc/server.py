@@ -9,10 +9,13 @@ import asyncio
 import logging
 import websockets
 
-from .enums import ReplyCode, ReplyType
+from .enums import ReplyCode, EventType
 from .errors import *
 from .events import Event
 from .utils import insort, LineBuffer, SortedHandler, IRCPrefix
+
+
+__all__ = ("Server", "DefaultServer")
 
 
 log = logging.getLogger("airc.server")
@@ -22,6 +25,7 @@ _rfc_pattern = r"^(@(?P<tags>[^ ]*) )?(:(?P<prefix>[^ ]+) +)?(?P<command>[^ ]+)(
 _regexp_rfc = re.compile(_rfc_pattern)
 
 
+# TODO: Move some of this to utils
 def _handle_tags(tags):
     if tags is None:
         return {}
@@ -58,21 +62,21 @@ def _handle_args(args):
 
 def _handle_command(command):
     if not command.isnumeric():
-        return ReplyType.PROTOCOL, command
+        return EventType.PROTOCOL, command
 
     try:
         com = int(command)
         code = ReplyCode(com)
 
         if 0 <= com <= 399:
-            type = ReplyType.REPLY
+            type = EventType.REPLY
         elif 400 <= com <= 599:
-            type = ReplyType.ERROR
+            type = EventType.ERROR
         else:
-            type = ReplyType.UNKNOWN
+            type = EventType.UNKNOWN
 
     except ValueError:
-        return ReplyType.UNKNOWN, command
+        return EventType.UNKNOWN, command
 
     return type, code.name
 
@@ -205,7 +209,7 @@ class DefaultServer(Server):
         return self
 
     async def _process_line(self, line):
-        event = Event(self, ReplyType.CLIENT, "all_raw_events", [None, line])
+        event = Event(self, EventType.CLIENT, "all_raw_events", [None, line])
         await self._handle_event(event)
 
         match = _regexp_rfc.match(line)

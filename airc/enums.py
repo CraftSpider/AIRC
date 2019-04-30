@@ -5,6 +5,9 @@
 import enum
 
 
+__all__ = ("ReplyCode", "EventType")
+
+
 class ReplyCode(enum.IntEnum):
 
     # Initial connect codes
@@ -193,17 +196,10 @@ class ReplyCode(enum.IntEnum):
     USERSDONTMATCH = 502
 
 
-class ReplyType(enum.Enum):
+class EventType(enum.Enum):
 
     REPLY = "RPL"  # Code between 0 and 399
     ERROR = "ERR"  # Code between 400 and 599
     PROTOCOL = "PROT"  # Non-numeric code
     UNKNOWN = "UNK"  # Unrecognized numeric code
     CLIENT = "CLNT"  # Client-side event
-
-
-class UserType(enum.Enum):
-
-    normal_user = "USER"
-    known_bot = "KNOWN"
-    verified_bot = "VERIFIED"
