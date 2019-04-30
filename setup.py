@@ -1,5 +1,6 @@
 
 import setuptools
+import re
 
 long_description = """
 An Asynchronous IRC Library
@@ -10,9 +11,29 @@ It contains built in support for Twitch.tv IRC websockets as well.
 
 AIRC is still in Alpha, so features may be added/removed/altered at any time."""
 
+with open("airc/__init__.py", "r") as file:
+    try:
+        version = re.search(r"^__version__\s*=\s*[\"']([^\"']*)[\"']", file.read(), re.MULTILINE).group(1)
+    except Exception as e:
+        raise RuntimeError("Version isn't set")
+
+if version.endswith(("a", "b")):
+    try:
+        import subprocess as sp
+        p = sp.Popen(["git", "rev-list", "--count", "HEAD"], stdout=sp.PIPE, stderr=sp.PIPE)
+        out, err = p.communicate()
+        if out:
+            version += out.decode("utf-8").strip()
+        p = sp.Popen(["git", "rev-parse", "--short", "HEAD"], stdout=sp.PIPE, stderr=sp.PIPE)
+        out, err = p.communicate()
+        if out:
+            version += "+g" + out.decode("utf-8").strip()
+    except Exception as e:
+        raise RuntimeError("Failure to get current git commit")
+
 setuptools.setup(
     name="airc",
-    version="1.0.0a1",
+    version=version,
     description="An asynchronous IRC implementation",
     long_description=long_description,
     long_description_content_type="text/x-rst",
@@ -27,7 +48,7 @@ setuptools.setup(
         'License :: OSI Approved :: MIT License',
         'Programming Language :: Python :: 3.5'
     ],
-    keywords="irc asyncio twitch",
+    keywords="irc asyncio",
     project_urls={
         "Source": "https://github.com/CraftSpider/AIRC",
         "Tracker": "https://github.com/CraftSpider/AIRC/issues"

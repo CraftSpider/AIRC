@@ -85,7 +85,8 @@ class SortedHandler:
         self.handler = handler
         self.priority = priority
 
-    async def __call__(self, event): await self.handler(event)
+    async def __call__(self, event):
+        await self.handler(event)
 
     def __lt__(self, other):
         return self.priority < other.priority
@@ -94,7 +95,7 @@ class SortedHandler:
         return self.priority > other.priority
 
 
-_irc_prefix_pattern = "^(?:(?P<nick>\w+)!)?(?:(?P<user>\w+)@)?(?P<host>.+)"
+_irc_prefix_pattern = r"^(?:(?P<nick>\w+)!)?(?:(?P<user>\w+)@)?(?P<host>.+)"
 _irc_prefix = re.compile(_irc_prefix_pattern)
 
 

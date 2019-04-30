@@ -5,7 +5,7 @@ import asyncio
 import inspect
 from airc.events import Event
 from airc.client import TwitchClient, TwitchChannel, TwitchUser, Messageable
-from airc.server import Cooldown
+from airc.server import TwitchServer, Cooldown
 from airc.enums import UserType
 
 log: logging.Logger
@@ -63,7 +63,7 @@ class TwitchMessage:
 
     __slots__ = ("id", "content", "bits", "emotes", "emote_only", "timestamp", "channel", "author")
 
-    id: int
+    id: str
     content: str
     bits: int
     emotes: List[str]
@@ -92,6 +92,9 @@ class Context(Messageable):
 
     @property
     def me(self) -> TwitchUser: ...
+
+    @property
+    def server(self) -> TwitchServer: ...
 
     async def send(self, message: str) -> None: ...
 

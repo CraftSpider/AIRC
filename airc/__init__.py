@@ -7,21 +7,18 @@
     :license: MIT, see LICENSE for details.
 """
 
-import logging
-
-from .master import ServerMaster
-from .events import Event, numeric
-from .enums import UserType
+from .events import Event
+from .enums import UserType, ReplyType
 from .errors import *
-from .server import TwitchServer
-from .client import TwitchClient
+from .server import Server, DefaultServer
+from .client import DefaultClient
 from .bot import *
 
 __title__ = "airc"
 __author__ = "CraftSpider"
 __license__ = "MIT"
-__copyright__ = "Copyright 2018 CraftSpider"
-__version__ = "0.1.0"
+__copyright__ = "Copyright 2019 CraftSpider"
+__version__ = "0.0.1"
 
 log = logging.getLogger(__name__)
 log.addHandler(logging.StreamHandler())

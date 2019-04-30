@@ -9,10 +9,10 @@ import asyncio
 import logging
 import websockets
 
-from .enums import UserType
+from .enums import ReplyCode, ReplyType
 from .errors import *
-from .events import numeric, Event
-from .utils import insort, LineBuffer, Cooldown, SortedHandler, IRCPrefix
+from .events import Event
+from .utils import insort, LineBuffer, SortedHandler, IRCPrefix
 
 
 log = logging.getLogger("airc.server")
@@ -57,10 +57,29 @@ def _handle_args(args):
 
 
 def _handle_command(command):
-    return numeric.get(command, command.lower())
+    if not command.isnumeric():
+        return ReplyType.PROTOCOL, command
+
+    try:
+        com = int(command)
+        code = ReplyCode(com)
+
+        if 0 <= com <= 399:
+            type = ReplyType.REPLY
+        elif 400 <= com <= 599:
+            type = ReplyType.ERROR
+        else:
+            type = ReplyType.UNKNOWN
+
+    except ValueError:
+        return ReplyType.UNKNOWN, command
+
+    return type, code.name
 
 
 def _handle_prefix(prefix):
+    if prefix is None:
+        return None
     return IRCPrefix(prefix)
 
 
@@ -69,11 +88,13 @@ class Server:
         Generic IRC connection. Subclassed by specific kinds of servers.
     """
 
-    __slots__ = ("loop", "master", "handlers", "socket", "connected")
+    __slots__ = ("loop", "master", "handlers", "socket", "connected", "_uri")
 
-    def __init__(self, master=None, loop=None):
+    def __init__(self, uri, master=None, *, loop=None):
         self.loop = loop or asyncio.get_event_loop()
         self.master = master
+
+        self._uri = uri
 
         self.handlers = {}
         self.socket = None
@@ -97,70 +118,71 @@ class Server:
         for h in handlers:
             if h.handler == handler:
                 handlers.remove(h)
+                break
+
+    async def _handle_event(self, event):
+        if self.master:
+            self.loop.create_task(self.master._handle_event(event))
+        for handler in self.handlers.get("all_events", ()):
+            try:
+                await handler(event)
+            except Exception as e:
+                raise HandlerError(e)
+        for handler in self.handlers.get(event.command, ()):
+            try:
+                await handler(event)
+            except Exception as e:
+                raise HandlerError(e)
 
     @abc.abstractmethod
-    async def connect(self, uri, name, password=""):
+    async def connect(self, name, password=""):
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    async def disconnect(self):
         raise NotImplementedError
 
     @abc.abstractmethod
     async def process_data(self):
         raise NotImplementedError
 
+    @abc.abstractmethod
+    async def send_raw(self, data):
+        raise NotImplementedError
 
-class TwitchServer(Server):
+
+class DefaultServer(Server):
     """
-        The TwitchServer represents a single connection to Twitch. It holds methods to support
-        any possible message that Twitch understands.
+        The default server is a 'standard' IRC server, complying with the
+        IRC specification
     """
 
-    __slots__ = ("user_type", "cooldown", "buffer", "uri", "username", "password")
+    __slots__ = ("buffer", "_uri", "username", "password")
 
-    mod_cooldown = Cooldown(100, 30)
-    join_cooldown = Cooldown(50, 15)
-
-    def __init__(self, master=None, user_type=UserType.normal_user, loop=None):
-        super().__init__(master, loop)
-        self.user_type = user_type
-        if user_type == UserType.normal_user:
-            self.cooldown = Cooldown(20, 30)
-        elif user_type == UserType.known_bot:
-            self.cooldown = Cooldown(50, 30)
-        elif user_type == UserType.verified_bot:
-            self.cooldown = Cooldown(7500, 30)
-        else:
-            self.cooldown = Cooldown(20, 30)
-
+    def __init__(self, uri, master=None, *, loop=None):
+        super().__init__(uri, master, loop=loop)
         self.buffer = LineBuffer()
-        self.uri = None
         self.username = None
         self.password = None
 
-    def __str__(self):
-        return f"TwitchServer(uri" \
-               f": '{self.uri}', name: '{self.username}')"
-
-    async def connect(self, uri, username, password=""):
-        self.uri = uri
-        self.socket = await websockets.connect(self.uri, ssl=None)
+    async def connect(self, username, password=""):
         self.username = username
         self.password = password
+
+        self.socket = await websockets.connect(self._uri, ssl=None)
         self.connected = True
 
-        await self.pass_(self.password)
+        if self.password:
+            await self.pass_(self.password)
         await self.nick(self.username)
         await self.user(self.username, self.username)
 
     async def disconnect(self):
+        await self.socket.close()
         self.socket = None
         self.connected = False
 
-    async def reconnect(self):
-        self.socket = await websockets.connect(self.uri, ssl=None)
-        self.connected = True
-
-        await self.pass_(self.password)
-        await self.nick(self.username)
-        await self.user(self.username, self.username)
+    # Methods for receiving data
 
     async def process_data(self):
         try:
@@ -183,89 +205,244 @@ class TwitchServer(Server):
         return self
 
     async def _process_line(self, line):
-        # Dispatch an all_raw_events event
-        event = Event(self, "all_raw_events", [line])
+        event = Event(self, ReplyType.CLIENT, "all_raw_events", [None, line])
         await self._handle_event(event)
 
         match = _regexp_rfc.match(line)
-        command = _handle_command(match.group('command'))
+
+        type, command = _handle_command(match.group('command'))
+        command = command.lower()
+
         args = _handle_args(match.group('argument'))
+
         tags = _handle_tags(match.group('tags'))
+
         prefix = _handle_prefix(match.group('prefix'))
 
         # Dispatch the actual specific event
-        event = Event(self, command, args, prefix, tags)
-        log.info(event)
+        event = Event(self, type, command, args, prefix, tags)
+        log.debug(event)
         await self._handle_event(event)
 
-    async def _handle_event(self, event):
-        if self.master:
-            self.loop.create_task(self.master._handle_event(event))
-        for handler in self.handlers.get("all_events", ()):
-            try:
-                await handler(event)
-            except Exception as e:
-                raise HandlerError(e)
-        for handler in self.handlers.get(event.type, ()):
-            try:
-                await handler(event)
-            except Exception as e:
-                raise HandlerError(e)
+    # Methods for sending data
 
-    async def cap(self, sub, *args):
-        if sub not in _client_subcommands:
-            raise AIRCError
-        if len(args) > 1:
-            args = (":" + args[0],) + args[1:]
-        await self.send_items("CAP", sub, *args)
-
-    async def join(self, channel):
-        await self.send_items("JOIN", channel)
-
-    async def nick(self, newnick):
-        await self.send_items("NICK", newnick)
-
-    async def part(self, channel):
-        await self.send_items("PART", channel)
-
-    async def pass_(self, password):
-        await self.send_items("PASS", password)
-
-    async def pong(self, loc):
-        await self.send_items("PONG", loc)
-
-    async def privmsg(self, channel, message):
-        await self.send_items("PRIVMSG", channel, ":" + message)
-
-    async def quit(self, message):
-        await self.send_items("QUIT", ":" + message)
-        await self.disconnect()
-
-    async def req_commands(self):
-        await self.cap("REQ", "twitch.tv/commands")
-
-    async def req_membership(self):
-        await self.cap("REQ", "twitch.tv/membership")
-
-    async def req_tags(self):
-        await self.cap("REQ", "twitch.tv/tags")
-
-    async def user(self, username, realname):
-        cmd = f"USER {username} 0 * : {realname}"
-        await self.send_raw(cmd)
+    async def send_raw(self, data):
+        await self.socket.send(data)
 
     async def send_items(self, *items):
         await self.send_raw(' '.join(filter(None, items)))
 
-    async def send_raw(self, raw):
-        if raw.startswith("JOIN "):
-            wait = self.join_cooldown.can_run()
-            while wait:
-                await asyncio.sleep(wait)
-                wait = self.join_cooldown.can_run()
-        else:
-            wait = self.cooldown.can_run()
-            while wait:
-                await asyncio.sleep(wait)
-                wait = self.cooldown.can_run()
-        await self.socket.send(raw)
+    # Handlers to send individual commands
+
+    # Server management
+
+    async def pass_(self, password):
+        await self.send_items("PASS", password)
+
+    async def nick(self, nick):
+        await self.send_items("NICK", nick)
+
+    async def user(self, user, realname, mode=None):
+        if mode is None:
+            mode = "0"
+        await self.send_items("USER", user, mode, "*", f":{realname}")
+
+    async def oper(self, name, password):
+        await self.send_items("OPER", name, password)
+
+    async def mode(self, nick, mode, param=None):
+        await self.send_items("MODE", nick, mode, param)
+
+    async def service(self, nick, distribution, type, info):
+        await self.send_items("SERVICE", nick, "*", distribution, type, "*", f":{info}")
+
+    async def quit(self, message=None):
+        if message is not None:
+            message = f":{message}"
+        await self.send_items("QUIT", message)
+        await self.disconnect()
+
+    async def squit(self, server, comment=None):
+        if comment is not None:
+            comment = f":{comment}"
+        await self.send_items("SQUIT", server, comment)
+
+    # Channel management
+
+    async def join(self, channel, key=None):
+        if isinstance(channel, list):
+            if key is not None and not isinstance(key, list):
+                raise TypeError("List of channels must use list of keys, if keys are provided")
+            channel = ",".join(channel)
+            if key is not None:
+                key = ",".join(key)
+        await self.send_items("JOIN", channel, key)
+
+    async def part(self, channel, message=None):
+        if isinstance(channel, list):
+            channel = ",".join(channel)
+        if message is not None:
+            message = f":{message}"
+        await self.send_items("PART", channel, message)
+
+    async def topic(self, channel, topic=None):
+        if topic is not None:
+            topic = f":{topic}"
+        await self.send_items("TOPIC", channel, topic)
+
+    async def names(self, channel=None, target=None):
+        if isinstance(channel, list):
+            channel = ",".join(channel)
+        await self.send_items("NAMES", channel, target)
+
+    async def list(self, channel=None, target=None):
+        if isinstance(channel, list):
+            channel = ",".join(channel)
+        await self.send_items("LIST", channel, target)
+
+    async def invite(self, nick, channel):
+        await self.send_items("INVITE", nick, channel)
+
+    async def kick(self, channel, user, comment=None):
+        if isinstance(channel, list):
+            channel = ",".join(channel)
+        if isinstance(user, list):
+            user = ",".join(user)
+        if comment is not None:
+            comment = f":{comment}"
+        await self.send_items("KICK", channel, user, comment)
+
+    # Sending messages
+
+    async def privmsg(self, target, text):
+        text = f":{text}"
+        await self.send_items("PRIVMSG", target, text)
+
+    async def notice(self, target, text):
+        text = f":{text}"
+        await self.send_items("NOTICE", target, text)
+
+    # Server queries
+
+    async def motd(self, target=None):
+        await self.send_items("MOTD", target)
+
+    async def lusers(self, mask=None, target=None):
+        await self.send_items("LUSERS", mask, target)
+
+    async def version(self, target=None):
+        await self.send_items("VERSION", target)
+
+    async def stats(self, query=None, target=None):
+        await self.send_items("STATS", query, target)
+
+    async def links(self, mask=None, remote=None):
+        await self.send_items("LINKS", remote, mask)
+
+    async def time(self, target=None):
+        await self.send_items("TIME", target)
+
+    async def connect_(self, target, port, remote=None):
+        await self.send_items("CONNECT", target, port, remote)
+
+    async def trace(self, target=None):
+        await self.send_items("TRACE", target)
+
+    async def admin(self, target=None):
+        await self.send_items("ADMIN", target)
+
+    async def info(self, target=None):
+        await self.send_items("INFO", target)
+
+    # Service queries
+
+    async def servlist(self, mask=None, type=None):
+        await self.send_items("SERVLIST", mask, type)
+
+    async def squery(self, name, text):
+        text = f":{text}"
+        await self.send_items(name, text)
+
+    # User queries
+
+    async def who(self, mask=None, ops_only=False):
+        if mask is None:
+            mask = "0"
+        if ops_only is True:
+            mask += " o"
+        await self.send_items("WHO", mask)
+
+    async def whois(self, mask, target=None):
+        if isinstance(mask, list):
+            mask = ",".join(mask)
+        await self.send_items("WHOIS", target, mask)
+
+    async def whowas(self, nick, count=None, target=None):
+        if isinstance(nick, list):
+            nick = ",".join(nick)
+        await self.send_items("WHOWAS", nick, count, target)
+
+    # Miscellaneous messages
+
+    async def kill(self, nick, comment):
+        comment = f":{comment}"
+        await self.send_items("KILL", nick, comment)
+
+    async def ping(self, serv1, serv2=None):
+        await self.send_items("PING", serv1, serv2)
+
+    async def pong(self, serv1, serv2=None):
+        await self.send_items("PONG", serv1, serv2)
+
+    async def error(self, message):
+        message = f":{message}"
+        await self.send_items("ERROR", message)
+
+    # Optional messages bellow
+
+    async def away(self, message=None):
+        if message is not None:
+            message = f":{message}"
+        await self.send_items("AWAY", message)
+
+    async def rehash(self):
+        await self.send_items("REHASH")
+
+    async def die(self):
+        await self.send_items("DIE")
+
+    async def restart(self):
+        await self.send_items("RESTART")
+
+    async def summon(self, user, target=None, channel=None):
+        await self.send_items("SUMMON", user, target, channel)
+
+    async def users(self, target=None):
+        await self.send_items("USERS", target)
+
+    async def wallops(self, message=None):
+        if message is not None:
+            message = f":{message}"
+        await self.send_items("WALLOPS", message)
+
+    async def userhost(self, nick):
+        if isinstance(nick, list):
+            if len(nick) > 5:
+                raise AttributeError("Userhost command can only get up to 5 users at once")
+            nick = " ".join(nick)
+        await self.send_items("USERHOST", nick)
+
+    async def ison(self, nick):
+        if isinstance(nick, list):
+            nick = " ".join(nick)
+        await self.send_items("ISON", nick)
+
+    # IRC v3 addons
+
+    async def cap(self, subcom, args):
+        if subcom not in _cap_subcommands:
+            raise AttributeError
+        if isinstance(args, list):
+            args = " ".join(args)
+        args = f":{args}"
+        await self.send_items("CAP", subcom, args)

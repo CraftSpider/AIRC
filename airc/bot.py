@@ -6,7 +6,7 @@ import asyncio
 import inspect
 import logging
 
-from .client import TwitchClient, Messageable
+from .client import DefaultClient, Messageable
 from .errors import HandlerError, CheckFailure
 from .enums import UserType
 from .events import Event
@@ -46,7 +46,7 @@ def _split_args(content):
     return args
 
 
-class TwitchBot(TwitchClient):
+class DefaultBot(DefaultClient):
 
     def __init__(self, prefix, user_type=UserType.normal_user, loop=None):
         super().__init__(user_type, loop)
@@ -54,7 +54,9 @@ class TwitchBot(TwitchClient):
         self.prefix = prefix
         self.all_commands = {}
         self.cogs = {}
+        self.events = {}
         self._checks = []
+        self.extensions = []
 
     def add_check(self, predicate):
         if not (asyncio.iscoroutine(predicate) or callable(predicate)):
@@ -117,7 +119,10 @@ class TwitchBot(TwitchClient):
                 continue
 
             if name.startswith("on_"):
-                pass  # TODO: more than one event function
+                event_name = name[3:]
+                if self.events.get(event_name) is None:
+                    self.events[event_name] = []
+                self.events[event_name].append(member)
 
     def remove_cog(self, name):
         cog = self.cogs.pop(name, None)
@@ -131,7 +136,8 @@ class TwitchBot(TwitchClient):
                 continue
 
             if name.startswith("on_"):
-                pass  # TODO: remove event function
+                event_name = name[3:]
+                self.events[event_name].remove(member)
 
         try:
             check = getattr(cog, f"_{cog.__class__.__name__}__global_check")
@@ -151,10 +157,20 @@ class TwitchBot(TwitchClient):
         del cog
 
     def load_extension(self, name):
-        pass  # TODO: Import and run setup
+        import importlib
+        try:
+            module = importlib.import_module(name)
+            module.setup(self)
+            self.extensions.append(module)
+        except Exception as e:
+            print(e)
 
-    def unload_extension(self, name):
-        pass  # TODO: Run teardown and un-import
+    def unload_extension(self, ext):
+        try:
+            self.extensions.remove(ext)
+            ext.teardown()
+        except Exception as e:
+            print(e)
 
     async def get_prefix(self, message):
         prefix = ret = self.prefix
@@ -180,6 +196,8 @@ class TwitchBot(TwitchClient):
             handler = getattr(self, "on_" + event.type, empty_handler)
             try:
                 await handler(event.target, *event.arguments)
+                for event in self.events[event.type]:
+                    await event(event.target, *event.arguments)
             except Exception as e:
                 raise HandlerError(e)
         else:
@@ -245,7 +263,7 @@ class TwitchMessage:
 
     def __init__(self, event, channel, author):
         tags = event.tags
-        self.id = int(tags.get("id", 0))
+        self.id = tags.get("id", "")
         self.content = event.arguments[0]
         self.bits = int(tags.get("bits", 0))
         self.emotes = tags.get("emotes")
@@ -282,11 +300,15 @@ class Context(Messageable):
     def me(self):
         return self.channel.me
 
+    @property
+    def server(self):
+        return self.bot.server
+
     async def send(self, message):
         await self.channel.send(message)
 
 
-class Command:  # TODO: add parent commands
+class Command:  # TODO: add command groups
 
     __slots__ = ("name", "callback", "active", "hidden", "aliases", "help", "params", "checks", "cooldowns")
 
