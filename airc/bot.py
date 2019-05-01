@@ -11,6 +11,7 @@ from .client import DefaultClient
 from .errors import HandlerError, CheckFailure
 from .events import Event
 from .utils import Cooldown
+from .enums import EventType
 
 
 _log = logging.getLogger("airc.bot")
@@ -212,7 +213,7 @@ class DefaultBot(DefaultClient):
     async def build_context(self, event):
         channel = self.get_channel(event.target)
         user = channel.get_user(event.prefix.nick)
-        message = TwitchMessage(event, channel, user)
+        message = Message(event, channel, user)
         ctx = Context(self, message)
 
         prefix = await self.get_prefix(message)
@@ -237,10 +238,10 @@ class DefaultBot(DefaultClient):
         try:
             if not await self.can_run(ctx):
                 raise CheckFailure("Global check failed")
-            await self._dispatch(Event(self.server, "command", [ctx]))
+            await self._dispatch(Event(self.server, EventType.CLIENT, "command", [None, ctx]))
             await ctx.command.invoke(ctx)
         except Exception as e:
-            error_event = Event(self.server, "commanderror", [ctx, e])
+            error_event = Event(self.server, EventType.CLIENT, "command_error", [None, ctx, e])
             await self._dispatch(error_event)
 
     async def can_run(self, ctx):
@@ -258,21 +259,12 @@ class DefaultBot(DefaultClient):
         await self._handle_command(event)
 
 
-class TwitchMessage:
+class Message:
 
-    __slots__ = ("id", "content", "bits", "emotes", "emote_only", "timestamp", "channel", "author")
-
-    def __init__(self, event, channel, author):
-        tags = event.tags
-        self.id = tags.get("id", "")
+    def __init__(self, event, channel, user):
         self.content = event.arguments[0]
-        self.bits = int(tags.get("bits", 0))
-        self.emotes = tags.get("emotes")
-        self.emote_only = bool(int(tags.get("emote-only", False)))
-        self.timestamp = int(tags.get("tmi-sent-ts", -1))
-
         self.channel = channel
-        self.author = author
+        self.author = user
 
 
 class Context(Messageable):

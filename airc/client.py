@@ -89,7 +89,7 @@ class DefaultClient:
                     tasks.remove(task)
             await asyncio.sleep(1)
 
-    async def _handle_event(self, event):
+    async def _dispatch(self, event):
         all_handler = getattr(self, "on_all_events", None)
         if all_handler is not None:
             await all_handler(event)

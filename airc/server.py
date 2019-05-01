@@ -124,9 +124,9 @@ class Server:
                 handlers.remove(h)
                 break
 
-    async def _handle_event(self, event):
+    async def _dispatch(self, event):
         if self.master:
-            self.loop.create_task(self.master._handle_event(event))
+            self.loop.create_task(self.master._dispatch(event))
         for handler in self.handlers.get("all_events", ()):
             try:
                 await handler(event)
@@ -210,7 +210,7 @@ class DefaultServer(Server):
 
     async def _process_line(self, line):
         event = Event(self, EventType.CLIENT, "all_raw_events", [None, line])
-        await self._handle_event(event)
+        await self._dispatch(event)
 
         match = _regexp_rfc.match(line)
 
@@ -226,7 +226,7 @@ class DefaultServer(Server):
         # Dispatch the actual specific event
         event = Event(self, type, command, args, prefix, tags)
         log.debug(event)
-        await self._handle_event(event)
+        await self._dispatch(event)
 
     # Methods for sending data
 
